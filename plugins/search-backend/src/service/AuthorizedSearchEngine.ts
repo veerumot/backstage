@@ -32,15 +32,23 @@ import {
   SearchResultSet,
 } from '@backstage/search-common';
 import { DocumentTypeInfo } from '@backstage/plugin-search-backend-node';
-import { Config } from '@backstage/config';
 
 export function decodePageCursor(pageCursor?: string): { page: number } {
   if (!pageCursor) {
     return { page: 0 };
   }
 
+  const page = Number(Buffer.from(pageCursor, 'base64').toString('utf-8'));
+  if (isNaN(page)) {
+    throw new Error('Invalid cursor');
+  }
+
+  if (page < 0) {
+    throw new Error('Invalid cursor');
+  }
+
   return {
-    page: Number(Buffer.from(pageCursor, 'base64').toString('utf-8')),
+    page,
   };
 }
 
@@ -48,19 +56,21 @@ export function encodePageCursor({ page }: { page: number }): string {
   return Buffer.from(`${page}`, 'utf-8').toString('base64');
 }
 
+export type AuthorizedSearchEngineConfig = {
+  queryLatencyBudgetMs: number;
+  pageSize: number;
+};
+
 export class AuthorizedSearchEngine implements SearchEngine {
-  private readonly pageSize: number = 25;
-  private readonly queryLatencyBudgetMs: number;
+  private readonly config: AuthorizedSearchEngineConfig;
 
   constructor(
     private readonly searchEngine: SearchEngine,
     private readonly types: Record<string, DocumentTypeInfo>,
     private readonly permissions: PermissionAuthorizer,
-    config: Config,
+    config?: Partial<AuthorizedSearchEngineConfig>,
   ) {
-    this.queryLatencyBudgetMs =
-      config.getOptionalNumber('search.permissions.queryLatencyBudgetMs') ??
-      1000;
+    this.config = { queryLatencyBudgetMs: 1000, pageSize: 25, ...config };
   }
 
   setTranslator(translator: QueryTranslator): void {
@@ -80,13 +90,13 @@ export class AuthorizedSearchEngine implements SearchEngine {
     const authorizer = new DataLoader((requests: readonly AuthorizeQuery[]) =>
       this.permissions.authorize(requests.slice(), options),
     );
-
     const requestedTypes = query.types || Object.keys(this.types);
+
     const typeDecisions = zipObject(
       requestedTypes,
       await Promise.all(
         requestedTypes.map(type => {
-          const permission = this.types[type].visibilityPermission;
+          const permission = this.types[type]?.visibilityPermission;
 
           return permission
             ? authorizer.load({ permission })
@@ -100,11 +110,11 @@ export class AuthorizedSearchEngine implements SearchEngine {
     );
 
     const { page } = decodePageCursor(query.pageCursor);
-    const targetResults = (page + 1) * this.pageSize;
+    const targetResults = (page + 1) * this.config.pageSize;
 
     let filteredResults: SearchResult[] = [];
     let nextPageCursor: string | undefined;
-    let latencyBudgetExhausted: boolean;
+    let latencyBudgetExhausted = false;
 
     do {
       const nextPage = await this.searchEngine.query(
@@ -118,7 +128,7 @@ export class AuthorizedSearchEngine implements SearchEngine {
 
       nextPageCursor = nextPage.nextPageCursor;
       latencyBudgetExhausted =
-        Date.now() - queryStartTime > this.queryLatencyBudgetMs;
+        Date.now() - queryStartTime > this.config.queryLatencyBudgetMs;
     } while (
       nextPageCursor &&
       filteredResults.length < targetResults &&
@@ -127,8 +137,8 @@ export class AuthorizedSearchEngine implements SearchEngine {
 
     return {
       results: filteredResults.slice(
-        page * this.pageSize,
-        (page + 1) * this.pageSize,
+        page * this.config.pageSize,
+        (page + 1) * this.config.pageSize,
       ),
       previousPageCursor:
         page === 0 ? undefined : encodePageCursor({ page: page - 1 }),
@@ -152,7 +162,7 @@ export class AuthorizedSearchEngine implements SearchEngine {
             return result;
           }
 
-          const permission = this.types[result.type].visibilityPermission;
+          const permission = this.types[result.type]?.visibilityPermission;
           const resourceRef = result.document.authorization?.resourceRef;
 
           if (!permission || !resourceRef) {
