@@ -1,5 +1,11 @@
 # @backstage/core-components
 
+## 0.8.6
+
+### Patch Changes
+
+- 3c04846633: chore(deps): bump `@material-table/core` from 3.1.0 to 4.3.19
+
 ## 0.8.5
 
 ### Patch Changes
