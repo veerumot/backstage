@@ -35,23 +35,26 @@ export type SearchAutocompleteFilterProps = SearchFilterComponentProps & {
 
 export const AutocompleteFilter = (props: SearchAutocompleteFilterProps) => {
   const {
-    asyncValues,
-    asyncDebounce,
     className,
     defaultValue,
     multiple,
     name,
     values: givenValues,
+    valuesDebounceMs,
     label,
     limitTags,
   } = props;
   const [inputValue, setInputValue] = useState<string>('');
   useDefaultFilterValue(name, defaultValue);
+  const asyncValues =
+    typeof givenValues === 'function' ? givenValues : undefined;
+  const defaultValues =
+    typeof givenValues === 'function' ? undefined : givenValues;
   const { value: values, loading } = useAsyncFilterValues(
     asyncValues,
     inputValue,
-    givenValues,
-    asyncDebounce,
+    defaultValues,
+    valuesDebounceMs,
   );
   const { filters, setFilters } = useSearch();
   const filterValue =
